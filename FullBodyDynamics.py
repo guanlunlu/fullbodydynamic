@@ -180,7 +180,7 @@ class FloatingBase:
         print("---")
 
     def VqMat(self, twist):
-        return np.transpose(twist.adjoint()) @ self.Mq
+        return twist.adjoint() @ self.Mq
 
     def gravityWrench(self, T_sb):
         mg_s = np.array([0, 0, self.m * self.g])
@@ -196,44 +196,45 @@ class FloatingBase:
         V_b = init_V  # Body twist
         traj = [[t0, T_sb, V_b, None]]
 
-        fig = plt.figure(figsize=(15, 15), dpi=90)
-        ax = fig.add_subplot(projection="3d")
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
-        ax.set_xlim(-0.005, 0.005)
-        ax.set_ylim(-0.005, 0.005)
-        ax.set_zlim(-0.005, 0.005)
-        ax.view_init(elev=0, azim=-90, roll=0)
-        ax.set_proj_type("ortho")
-        T_sb.plot(ax)
-        R_acc_ = np.eye(4)
+        R_k = np.eye(3)
 
         for t in ts:
             # wrench in body frame
-            tau = self.gravityWrench(T_sb)
+            r_ = R.from_matrix(T_sb.Mat[:3, :3])
+            print("Euler, ", r_.as_euler("zyx"))
 
+            tau = self.gravityWrench(T_sb)
             # body twist rate
-            dVdt = np.linalg.inv(self.Mq) @ (tau.Mat - self.VqMat(V_b) @ V_b.Mat)
+            # dVdt = np.linalg.inv(self.Mq) @ (tau.Mat)
+            Vq = (
+                np.block(
+                    [
+                        [skewsym_mat(V_b.w * dt), np.zeros((3, 3))],
+                        [np.zeros((3, 3)), skewsym_mat(V_b.w * dt)],
+                    ]
+                )
+                @ self.Mq
+            )
+
+            dVdt = np.linalg.inv(self.Mq) @ (tau.Mat + Vq @ V_b.Mat)
+
+            V_b.v = np.transpose(R_k[:3, :3]) @ V_b.v
+            V_b.w = np.transpose(R_k[:3, :3]) @ V_b.w
+            print("tau, ", tau.Mat.reshape(6))
+            print("dv, dw, ", dVdt[3:].reshape(3), dVdt[:3].reshape(3))
+            print("V_b_1, ", V_b.v.reshape(3))
 
             V_b = V_b.integrate(dVdt[3:], dVdt[:3], dt)
+            print("V_b, ", V_b.v.reshape(3))
 
-            T_bn = HomoTransform(np.eye(3), np.array([0, 0, 0]))
-            T_bn = T_bn.integrate(V_b, dt)
-            rot = R.from_rotvec(V_b.Mat[:3].reshape(3) * dt)
+            V_s = r_.as_matrix() @ V_b.Mat[3:]
+            print("V_s, ", V_s.reshape(3))
+            print("x: ", T_sb.Mat[0, 3])
+            print("--")
 
-            T_bn = np.block(
-                [
-                    [
-                        np.transpose(rot.as_matrix()),
-                        np.transpose(rot.as_matrix()) @ V_b.Mat[3:] * dt,
-                    ],
-                    [np.array([0, 0, 0, 1])],
-                ]
-            )
-            T_bn = HomoTransform(T_bn[:3, :3], T_bn[:3, 3]).inverse()
+            rot = R.from_rotvec(V_b.w.reshape(3) * dt)
 
-            R_ = np.block(
+            R_k = np.block(
                 [
                     [
                         rot.as_matrix(),
@@ -243,81 +244,19 @@ class FloatingBase:
                 ]
             )
 
-            P = np.block(
-                [
-                    [np.eye(3), V_b.Mat[3:] * dt],
-                    [np.array([0, 0, 0, 1])],
-                ]
-            )
-
-            R_acc_ = R_acc_ @ R_
-
-            # T_trans = T_sb.Mat @ P
-            # HomoTransform(T_trans[:3, :3], T_trans[:3, 3]).plot(ax)
-            # T_rot = T_trans @ R_
-            # HomoTransform(T_rot[:3, :3], T_rot[:3, 3]).plot(ax)
-            # T_sb = HomoTransform(T_rot[:3, :3], T_rot[:3, 3])
-
-            T_rot = T_sb.Mat @ R_
-            # HomoTransform(T_rot[:3, :3], T_rot[:3, 3]).plot(ax, scale=0.001)
+            T_rot = T_sb.Mat @ R_k
 
             P_ = np.block(
                 [
-                    [np.eye(3), np.transpose(T_rot[:3, :3]) @ V_b.Mat[3:] * dt],
+                    [np.eye(3), np.transpose(R_k[:3, :3]) @ V_b.Mat[3:] * dt],
                     [np.array([0, 0, 0, 1])],
                 ]
             )
 
             T_trans = T_rot @ P_
-            # HomoTransform(T_trans[:3, :3], T_trans[:3, 3]).plot(ax, scale=0.001)
             T_sb = HomoTransform(T_trans[:3, :3], T_trans[:3, 3])
 
-            # T_sn = T_sb.Mat @ T_bn.inverse().Mat
-            T_sn = T_sb.Mat @ T_bn.Mat
-            T_sb = HomoTransform(T_sn[:3, :3], T_sn[:3, 3])
-
-            """
-            T_sn = T_sb.Mat @ R_ @ P
-
-            # T_sn = T_bn @ T_sb.Mat
-            T_sb = HomoTransform(T_sn[:3, :3], T_sn[:3, 3])
-            """
-            # T_sb.plot(ax)
-            # T_sb = T_sb.integrate(V_b, dt)
-            # T_sb = T_sb.integrate(V_b.convertFrame(T_sb), dt)
-
             traj.append([t, T_sb, V_b, dVdt])
-            print("tau")
-            print(tau.Mat.reshape(6))
-            # print("dVdt")
-            # print(dVdt.reshape(6))
-            # print("body twist")
-            # print(V_b.Mat.reshape(6))
-            # print("spatial twist")
-            # print(V_b.convertFrame(T_sb).Mat.reshape(6))
-            # print("T_sb")
-            # print(T_sb.Mat)
-            # print("T_bn")
-            # # print(T_bn.Mat)
-            print("rotation")
-            print(V_b.Mat[:3].reshape(3) * dt)
-            print("translation")
-            print(np.transpose(rot.as_matrix()) @ V_b.Mat[3:] * dt)
-            # print(V_b.Mat[3:].reshape(3) * dt)
-            print("T_sb")
-            # print(T_sb.Mat)
-            print("--")
-
-            """
-            print("t:", t)
-            print("dvdt: ")
-            print(dVdt.reshape((1, -1)))
-            print("V_b: ")
-            print(V_b.Mat.reshape((1, -1)))
-            print("T_sb: ")
-            print(T_sb.Mat)
-            print("==")
-            """
 
         return traj
 
@@ -349,11 +288,11 @@ if __name__ == "__main__":
     # R0 = np.eye(3)
     R0 = rot.as_matrix()
     p0 = np.array([0, 0, 0])
-    v0 = twist(np.array([0, 0, 0]), np.array([0, 10, 0]))
+    v0 = twist(np.array([0, 0, 0]), np.array([5, 5, 0]))
 
     robot = FloatingBase(p0, R0, v0)
     start = time.time()
-    traj = robot.solveFowardDyamic(0, 0.5, robot.T_sb, robot.V_b, 0.001)
+    traj = robot.solveFowardDyamic(0, 5, robot.T_sb, robot.V_b, 0.001)
     # traj = robot.solveFowardDyamic(0, 0.5, robot.T_sb, robot.V_b, 0.01)
     plt.show()
 
