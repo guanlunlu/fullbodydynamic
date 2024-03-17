@@ -283,7 +283,7 @@ if __name__ == "__main__":
     rot = R.from_euler("zyx", [0, 0, 0], degrees=True)
     R0 = rot.as_matrix()
     p0 = np.array([0, 0, 0.2])
-    v0 = twist(np.array([5, 0, 3]), np.array([0, 5, 0]))
+    v0 = twist(np.array([5, 0, 5]), np.array([0, 5, 0]))
 
     robot = FloatingBase(p0, R0, v0)
     start = time.time()
