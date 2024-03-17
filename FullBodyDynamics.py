@@ -1,9 +1,6 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-import time
-import os
-
 from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.mplot3d import proj3d
 import matplotlib as mpl
@@ -11,6 +8,11 @@ import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 
 # mpl.rcParams["figure.dpi"] = 150
+
+# for animation
+import visualize as vs
+import threading
+import time
 
 
 def skewsym_mat(vx):
@@ -155,9 +157,9 @@ class FloatingBase:
         # Floating Base physic prop.
         self.m = 21
         self.g = -9.81
-        self.w = 0.1
-        self.h = 0.1
-        self.l = 0.2
+        self.w = 577.5 * 0.001
+        self.h = 144 * 0.001
+        self.l = 329.5 * 0.001
         self.Ixx = 1 / 12 * self.m * (self.w**2 + self.h**2)
         self.Iyy = 1 / 12 * self.m * (self.l**2 + self.h**2)
         self.Izz = 1 / 12 * self.m * (self.l**2 + self.w**2)
@@ -165,7 +167,6 @@ class FloatingBase:
         self.Ib = np.diag([self.Ixx, self.Iyy, self.Izz])
         self.Mb = np.diag([self.m, self.m, self.m])
         self.Mq = np.block([[self.Ib, np.zeros((3, 3))], [np.zeros((3, 3)), self.Mb]])
-        self.Vq = self.VqMat(init_vb)
 
         # initial configuration w.r.t. fixed frame (s)
         self.T_sb = HomoTransform(init_R, init_p)
@@ -179,15 +180,10 @@ class FloatingBase:
         print(self.gravityWrench(self.T_sb).Mat.reshape((1, -1)))
         print("---")
 
-    def VqMat(self, twist):
-        return twist.adjoint() @ self.Mq
-
     def gravityWrench(self, T_sb):
         mg_s = np.array([0, 0, self.m * self.g])
         grav_s = wrench(np.cross(T_sb.p.reshape((1, -1)), mg_s), mg_s)
-        # print("grav_s\n", grav_s.Mat.reshape(6))
         grav_b = grav_s.convertFrame(T_sb)
-        # print("grav_b\n", grav_b.Mat.reshape(6))
         return grav_b
 
     def solveFowardDyamic(self, t0, tf, init_T, init_V, dt=0.001):
@@ -201,11 +197,10 @@ class FloatingBase:
         for t in ts:
             # wrench in body frame
             r_ = R.from_matrix(T_sb.Mat[:3, :3])
-            print("Euler, ", r_.as_euler("zyx"))
+            # print("Euler, ", r_.as_euler("zyx"))
 
             tau = self.gravityWrench(T_sb)
             # body twist rate
-            # dVdt = np.linalg.inv(self.Mq) @ (tau.Mat)
             Vq = (
                 np.block(
                     [
@@ -216,24 +211,17 @@ class FloatingBase:
                 @ self.Mq
             )
 
+            # dVdt = np.linalg.inv(self.Mq) @ (tau.Mat)
             dVdt = np.linalg.inv(self.Mq) @ (tau.Mat + Vq @ V_b.Mat)
 
+            # Transform twist vector from previous frame to current frame
             V_b.v = np.transpose(R_k[:3, :3]) @ V_b.v
             V_b.w = np.transpose(R_k[:3, :3]) @ V_b.w
-            print("tau, ", tau.Mat.reshape(6))
-            print("dv, dw, ", dVdt[3:].reshape(3), dVdt[:3].reshape(3))
-            print("V_b_1, ", V_b.v.reshape(3))
-
             V_b = V_b.integrate(dVdt[3:], dVdt[:3], dt)
-            print("V_b, ", V_b.v.reshape(3))
-
             V_s = r_.as_matrix() @ V_b.Mat[3:]
-            print("V_s, ", V_s.reshape(3))
-            print("x: ", T_sb.Mat[0, 3])
-            print("--")
 
+            # Transform to Base position to next world frame
             rot = R.from_rotvec(V_b.w.reshape(3) * dt)
-
             R_k = np.block(
                 [
                     [
@@ -243,16 +231,13 @@ class FloatingBase:
                     [np.array([0, 0, 0, 1])],
                 ]
             )
-
             T_rot = T_sb.Mat @ R_k
-
             P_ = np.block(
                 [
                     [np.eye(3), np.transpose(R_k[:3, :3]) @ V_b.Mat[3:] * dt],
                     [np.array([0, 0, 0, 1])],
                 ]
             )
-
             T_trans = T_rot @ P_
             T_sb = HomoTransform(T_trans[:3, :3], T_trans[:3, 3])
 
@@ -278,41 +263,37 @@ def aniRun(i, *fargs):
     pass
 
 
+def animation(cv, traj, stepfactor=1, timefactor=1):
+    cnt = 0
+    dcnt = int(16 * stepfactor)
+    dt = 0.016 / timefactor
+    while True:
+        R_ = traj[cnt][1].R
+        P_ = traj[cnt][1].p
+        cv.update_bodytf(R_, P_)
+        cnt += dcnt
+        if cnt >= len(traj):
+            cnt = 0
+        time.sleep(dt)
+
+
 if __name__ == "__main__":
     print("Full Body Dynamic")
 
-    # os.nice(-19)
     rot = R.from_euler("zyx", [0, 0, 0], degrees=True)
-    # rot = R.from_rotvec(np.array([0, 30, 0]), degrees=True)
-
-    # R0 = np.eye(3)
     R0 = rot.as_matrix()
-    p0 = np.array([0, 0, 0])
-    v0 = twist(np.array([0, 0, 0]), np.array([5, 5, 0]))
+    p0 = np.array([0, 0, 0.2])
+    v0 = twist(np.array([5, 0, 3]), np.array([0, 5, 0]))
 
     robot = FloatingBase(p0, R0, v0)
     start = time.time()
-    traj = robot.solveFowardDyamic(0, 5, robot.T_sb, robot.V_b, 0.001)
-    # traj = robot.solveFowardDyamic(0, 0.5, robot.T_sb, robot.V_b, 0.01)
-    plt.show()
+    traj = robot.solveFowardDyamic(0, 1, robot.T_sb, robot.V_b, 0.001)
 
     print("time elapsed: ", time.time() - start)
     print("steps: ", len(traj))
 
-    # animation
-    if len(traj) > 20:
-        fig = plt.figure(figsize=(15, 15), dpi=90)
-        ax = fig.add_subplot(projection="3d")
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
-        ax.set_xlim(-0.5, 5)
-        ax.set_ylim(-0.5, 5)
-        ax.set_zlim(-0.5, 5)
-
-        ani = animation.FuncAnimation(
-            fig, aniRun, frames=int(traj[-1][0] / 0.05), interval=20, fargs=(ax, traj)
-        )
-
-        plt.show()
-        ani.save("animation.gif", fps=50)  # 儲存為 gif
+    cv = vs.corgiVisualize()
+    t = threading.Thread(target=animation, args=(cv, traj, 0.1, 1))
+    t.start()
+    vs.app.run()
+    cv.writer.close()
