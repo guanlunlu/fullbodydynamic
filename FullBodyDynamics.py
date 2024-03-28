@@ -172,13 +172,13 @@ class FloatingBase:
         self.T_sb = HomoTransform(init_R, init_p)
         self.V_b = init_vb
 
-        print("---")
-        print("Floating Base initialized at \n p: ", init_p, ",\n R: ", init_R)
-        print(" T_sb0: \n", self.T_sb.Mat)
-        print(" V_b0:\n", self.V_b.Mat.reshape((1, -1)))
-        print("gravity_bodyframe")
-        print(self.gravityWrench(self.T_sb).Mat.reshape((1, -1)))
-        print("---")
+        # print("---")
+        # print("Floating Base initialized at \n p: ", init_p, ",\n R: ", init_R)
+        # print(" T_sb0: \n", self.T_sb.Mat)
+        # print(" V_b0:\n", self.V_b.Mat.reshape((1, -1)))
+        # print("gravity_bodyframe")
+        # print(self.gravityWrench(self.T_sb).Mat.reshape((1, -1)))
+        # print("---")
 
     def gravityWrench(self, T_sb):
         mg_s = np.array([0, 0, self.m * self.g])
@@ -186,8 +186,8 @@ class FloatingBase:
         grav_b = grav_s.convertFrame(T_sb)
         return grav_b
 
-    def solveFowardDyamic(self, t0, tf, init_T, init_V, dt=0.001):
-        ts = np.arange(t0 + dt, tf, dt)
+    def solveFowardDyamic(self, t0, tf, init_T, init_V, wrenches=[], dt=0.001):
+        ts = np.arange(t0 + dt, tf + dt, dt)
         T_sb = init_T  # Init Transform
         V_b = init_V  # Body twist
         traj = [[t0, T_sb, V_b, None]]
@@ -199,7 +199,11 @@ class FloatingBase:
             r_ = R.from_matrix(T_sb.Mat[:3, :3])
             # print("Euler, ", r_.as_euler("zyx"))
 
-            tau = self.gravityWrench(T_sb)
+            gravity_wrench = self.gravityWrench(T_sb)
+            tau_total = gravity_wrench.Mat
+            for wrench in wrenches:
+                tau_total += wrench.Mat
+
             # body twist rate
             Vq = (
                 np.block(
@@ -212,7 +216,7 @@ class FloatingBase:
             )
 
             # dVdt = np.linalg.inv(self.Mq) @ (tau.Mat)
-            dVdt = np.linalg.inv(self.Mq) @ (tau.Mat + Vq @ V_b.Mat)
+            dVdt = np.linalg.inv(self.Mq) @ (tau_total + Vq @ V_b.Mat)
 
             # Transform twist vector from previous frame to current frame
             V_b.v = np.transpose(R_k[:3, :3]) @ V_b.v
@@ -242,6 +246,7 @@ class FloatingBase:
             T_sb = HomoTransform(T_trans[:3, :3], T_trans[:3, 3])
 
             traj.append([t, T_sb, V_b, dVdt])
+            # print("t:", t)
 
         return traj
 
@@ -287,7 +292,7 @@ if __name__ == "__main__":
 
     robot = FloatingBase(p0, R0, v0)
     start = time.time()
-    traj = robot.solveFowardDyamic(0, 1, robot.T_sb, robot.V_b, 0.001)
+    traj = robot.solveFowardDyamic(0, 1, robot.T_sb, robot.V_b, dt=0.001)
 
     print("time elapsed: ", time.time() - start)
     print("steps: ", len(traj))

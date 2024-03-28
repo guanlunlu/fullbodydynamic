@@ -17,7 +17,7 @@ class corgiVisualize:
         self.canvas = scene.SceneCanvas(
             title="Corgi Full Body Dynamic",
             keys="interactive",
-            size=(1920, 1080),
+            size=(1920, 1088),
             bgcolor="#d8e6df",
             show=True,
             app="pyqt5",
@@ -89,7 +89,7 @@ class corgiVisualize:
         self.timer.start(0)
 
         # writer
-        self.writer = imageio.get_writer("viz.mp4", fps=60, quality=9)
+        self.writer = imageio.get_writer("viz.mov", fps=60, quality=9)
         # self.writer = imageio.get_writer("viz.gif", fps=60, quality=9)
 
     def update_bodytf(self, R_, P_):
@@ -117,7 +117,7 @@ class corgiVisualize:
         axis_tf.translate(self.body_translation)
         self.body_axis.transform = axis_tf
 
-        im = self.canvas.render(alpha=True, size=(1920, 1080))
+        im = self.canvas.render(alpha=True, size=(1920, 1088))
         self.writer.append_data(im)
 
 
